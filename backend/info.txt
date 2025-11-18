@@ -2,3 +2,14 @@ DB: postgres
 DB name: acme
 DB password: acmepw
 Docker Code: docker run --name acme -e POSTGRES_PASSWORD=acmepw -d -p 5432:5432 postgres
+
+
+redis is used online redis- docker run -d --name redis-local -p 6379:6379 redis:latest
+
+trunkate_table= TRUNCATE TABLE "processFile_product";
+
+
+rabbitmq is used :- https://api.cloudamqp.com/
+
+in venv:-   for multple worker for process:- python -m celery -A acme worker -Q process --concurrency=10 -n process_worker@%h
+            for single worker to upload:- python -m celery -A acme worker -Q upload --concurrency=1 -n upload_worker@%h

@@ -1,0 +1,36 @@
+STORY 1 — File Upload via UI
+    As a user, I should be able to upload a large CSV file (up to 500,000 products) directly through the application’s user interface.
+    The UI should display a clear and intuitive file upload component.
+    During the upload process, the UI should show a real-time progress indicator (e.g., percentage, progress bar).
+    If duplicate products exist, the system should automatically overwrite based on SKU, treating the SKU as case-insensitive.
+    The SKU must remain unique across all records.
+    Products may be marked as active or inactive (even though this field is not part of the CSV).
+    The upload flow should be optimized for handling large files efficiently while remaining responsive.
+
+STORY 1A — Upload Progress Visibility
+    As a user, I should be able to see the upload progress directly in the UI in real time.
+    The progress should dynamically update as the file is being processed.
+    The UI should display visual cues like a progress bar, percentage, or status messages (e.g., “Parsing CSV”, “Validating”, “Import Complete”).
+    If the upload fails or encounters errors, the UI should clearly show the failure reason and provide a retry option.
+    The technical implementation may rely on APIs (e.g., SSE, WebSockets, or polling), but the focus is on providing a smooth, interactive visual experience.
+
+STORY 2 — Product Management UI
+    As a user, I should be able to view, create, update, and delete products entirely from a web interface.
+    The interface should support:
+    Filtering by SKU, name, active status, or description.
+    Paginated viewing of product lists with clear navigation controls.
+    Inline editing or a simple modal form for creating/updating products.
+    Deletion with a confirmation step.
+    Minimalist, clean design — even a simple HTML/JS frontend is sufficient as long as it demonstrates all functional capabilities.
+
+STORY 3 — Bulk Delete from UI
+    As a user, I should be able to delete all existing products directly from the UI.
+    This operation must be protected with a confirmation dialog (e.g., “Are you sure? This cannot be undone.”).
+    The UI should display success/failure notifications after the operation.
+    This feature should be responsive and provide visual feedback during processing.
+    STORY 4 — Webhook Configuration via UI
+    As a user, I should be able to configure and manage multiple webhooks through the application’s user interface.
+    The UI should allow adding, editing, testing, and deleting webhooks.
+    It should display webhook URLs, event types, and enable/disable status.
+    There should be visual confirmation of successful test triggers (e.g., response code, response time).
+    The webhook processing should remain performant and not degrade overall application responsiveness.	

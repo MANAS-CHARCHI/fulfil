@@ -94,6 +94,26 @@ DATABASES = {
     }
 }
 
+CELERY_BROKER_URL = "redis://localhost:6379/0"
+CELERY_RESULT_BACKEND = "redis://localhost:6379/1"
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+CELERY_TASK_ROUTES = {
+    "importer.tasks.split_csv_into_chunks": {"queue": "upload"},
+    "importer.tasks.process_chunk": {"queue": "process"},
+    "importer.tasks.finalize_import": {"queue": "process"},
+}
+CELERY_TASK_ALWAYS_EAGER = False
+CACHES = {
+    "default": {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": "redis://127.0.0.1:6379/1",
+        "OPTIONS": {
+            "CLIENT_CLASS": "django_redis.client.DefaultClient",
+        }
+    }
+}
+
+
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
 
