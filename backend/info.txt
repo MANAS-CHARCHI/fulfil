@@ -1,0 +1,4 @@
+DB: postgres
+DB name: acme
+DB password: acmepw
+Docker Code: docker run --name acme -e POSTGRES_PASSWORD=acmepw -d -p 5432:5432 postgres
