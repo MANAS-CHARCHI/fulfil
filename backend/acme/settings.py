@@ -41,7 +41,7 @@ INSTALLED_APPS = [
 ADDED_APPS=[
     'corsheaders',
     'rest_framework',
-    'processFile'
+    'processFile',
 ]
 INSTALLED_APPS += ADDED_APPS
 
@@ -93,15 +93,21 @@ DATABASES = {
         "PORT": "5432",
     }
 }
+import os
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+MEDIA_URL = '/media/'
 
-CELERY_BROKER_URL = "redis://localhost:6379/0"
+ASGI_APPLICATION = 'acme.asgi.application'
+CELERY_BROKER_URL = "amqp://guest:guest@localhost:5672//"
 CELERY_RESULT_BACKEND = "redis://localhost:6379/1"
+
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+
 CELERY_TASK_ROUTES = {
-    "importer.tasks.split_csv_into_chunks": {"queue": "upload"},
-    "importer.tasks.process_chunk": {"queue": "process"},
-    "importer.tasks.finalize_import": {"queue": "process"},
+    "processFile.tasks.process_csv_phase1": {"queue": "import"},
+    "processFile.tasks.process_csv_phase2": {"queue": "merge"},
 }
+
 CELERY_TASK_ALWAYS_EAGER = False
 CACHES = {
     "default": {
@@ -112,6 +118,7 @@ CACHES = {
         }
     }
 }
+
 
 
 # Password validation

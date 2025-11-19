@@ -1,98 +1,139 @@
-import csv, os
-from celery import shared_task, group, chord
-from .utils_csv import split_csv
-from django.db import OperationalError
-from .models import Product
-from .progress import publish_progress
-from django.conf import settings
+# catalog/tasks.py
+import csv
+import io
+from celery import shared_task, Task
 from django.db import connection
-from django.utils import timezone
+from .models import UploadJob
+from .redis_utils import set_progress
 
-# -------------------------
-# STEP 1 — SPLIT CSV
-# -------------------------
-@shared_task(bind=True)
-def split_csv_into_chunks(self, path):
-    print("CELERY MEDIA_ROOT =", settings.MEDIA_ROOT)
-
-    publish_progress(self.request.id, {"stage": "splitting"})
-
-    chunks, folder = split_csv(path)
-
-    publish_progress(self.request.id, {
-        "stage": "chunks_created",
-        "folder": folder,
-        "chunks": len(chunks)
-    })
-
-    # send all chunks to "process_chunk" workers
-    job = group(process_chunk.s(chunk_path) for chunk_path in chunks)
-
-    return chord(job)(finalize_import.s(folder))
+BATCH = 2000
 
 
-# -------------------------
-# STEP 2 — PROCESS EACH CHUNK
-# -------------------------
-@shared_task(queue="process")
-def process_chunk(chunk_path):
-    print("Processing:", chunk_path)
-
-    rows_dict = {}  # use dict to deduplicate by SKU
-    now = timezone.now()
-
-    # Read CSV and deduplicate by SKU (case-insensitive)
-    with open(chunk_path, "r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            sku = row["sku"].lower()
-            rows_dict[sku] = (
-                sku,
-                row.get("name", "")[:255],
-                row.get("description", ""),
-                True,  # active
-                now,   # created_at
-                now,   # updated_at
-            )
-
-    rows = list(rows_dict.values())
-
-    if not rows:
-        return {"processed": 0}
-
-    # Build placeholder list for bulk insert
-    placeholders = ",".join(["(%s, %s, %s, %s, %s, %s)"] * len(rows))
-
-    # Flatten params for psycopg2
-    flat_params = [value for row in rows for value in row]
-
-    query = f"""
-        INSERT INTO "processFile_product" (sku, name, description, active, created_at, updated_at)
-        VALUES {placeholders}
-        ON CONFLICT (sku)
-        DO UPDATE SET
-            name = EXCLUDED.name,
-            description = EXCLUDED.description,
-            active = EXCLUDED.active,
-            updated_at = EXCLUDED.updated_at;
-    """
-
-    from django.db import connection
-    with connection.cursor() as cursor:
-        cursor.execute(query, flat_params)
-
-    return {"processed": len(rows)}
+class BaseTaskWithRetry(Task):
+    autoretry_for = (Exception,)
+    retry_kwargs = {"max_retries": 3, "countdown": 5}
+    retry_backoff = True
 
 
-# -------------------------
-# STEP 3 — FINALIZE
-# -------------------------
-@shared_task
-def finalize_import(results, folder):
-    total = sum(r["processed"] for r in results)
-    publish_progress("global", {
-        "stage": "completed",
-        "processed": total,
-        "folder": folder
-    })
-    return {"total": total}
+# ---------------------------------------------------------
+# PHASE 1 — PARSING CSV + STAGING INSERT
+# ---------------------------------------------------------
+@shared_task(bind=True, base=BaseTaskWithRetry)
+def process_csv_phase1(self, job_id, file_path):
+    job = UploadJob.objects.get(id=job_id)
+
+    # ❗ Start parsing phase
+    job.status = "parsing"
+    job.save(update_fields=["status"])
+    set_progress(job_id, processed=0, total=0, status="parsing")
+
+    rows = 0
+
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            reader = csv.reader(f)
+            header = next(reader)
+
+            # Prepare temp CSV
+            out = io.StringIO()
+            writer = csv.writer(out)
+            writer.writerow(["job_id"] + header)
+
+            # 🔥 PARSING PROGRESS (real-time)
+            for row in reader:
+                writer.writerow([job_id] + row)
+                rows += 1
+
+                if rows % 5000 == 0:
+                    set_progress(job_id, processed=rows, total=rows, status="parsing")
+
+            out.seek(0)
+
+            # Switch status to staging
+            job.status = "staging"
+            job.save(update_fields=["status"])
+
+            copy_sql = f"""
+                COPY product_import_staging (job_id, {", ".join(header)})
+                FROM STDIN WITH CSV HEADER
+            """
+
+            # Perform COPY
+            with connection.cursor() as cur:
+                cur.copy_expert(copy_sql, out)
+
+        # Finish phase
+        job.total_rows = rows
+        job.processed_rows = rows
+        job.save(update_fields=["total_rows", "processed_rows"])
+
+        # 🔥 FINISHED STAGING
+        set_progress(job_id, processed=rows, total=rows, status="staging")
+
+    except Exception as exc:
+        err_msg = str(exc)
+        job.status = "failed"
+        job.error_message = err_msg
+        job.save(update_fields=["status", "error_message"])
+        set_progress(job_id, status="failed", error=err_msg)
+        raise
+
+    # ---------------------------------------------------------
+    # Move to PHASE 2
+    # ---------------------------------------------------------
+    from .tasks import process_csv_phase2
+    process_csv_phase2.apply_async(args=[job_id], queue="imports_merge")
+
+
+# ---------------------------------------------------------
+# PHASE 2 — MERGE INTO MAIN TABLE
+# ---------------------------------------------------------
+@shared_task(bind=True, base=BaseTaskWithRetry)
+def process_csv_phase2(self, job_id):
+    job = UploadJob.objects.get(id=job_id)
+
+    # 🔥 Start importing phase
+    job.status = "importing"
+    job.save(update_fields=["status"])
+    set_progress(job_id, status="importing", processed=0, total=1)
+
+    try:
+        with connection.cursor() as cur:
+            merge_sql = """
+                INSERT INTO "processFile_product"
+                (sku, name, description, active, created_at, updated_at)
+                SELECT DISTINCT ON (LOWER(sku))
+                    LOWER(sku), name, description, TRUE, now(), now()
+                FROM product_import_staging
+                WHERE job_id = %s
+                ORDER BY LOWER(sku), id DESC
+                ON CONFLICT (sku) DO UPDATE SET
+                    name=EXCLUDED.name,
+                    description=EXCLUDED.description,
+                    active=EXCLUDED.active,
+                    updated_at=now();
+            """
+            cur.execute(merge_sql, [job_id])
+
+        # 🔥 100% importing done
+        set_progress(job_id, processed=1, total=1, status="importing")
+
+        # Cleanup staging
+        with connection.cursor() as cur:
+            cur.execute("DELETE FROM product_import_staging WHERE job_id = %s", [job_id])
+
+        # Completed
+        job.status = "completed"
+        job.processed_rows = job.total_rows
+        job.save(update_fields=["status", "processed_rows"])
+
+        # Final SSE push
+        set_progress(job_id, processed=job.total_rows, total=job.total_rows, status="completed")
+
+    except Exception as exc:
+        err_msg = str(exc)
+        job.status = "failed"
+        job.error_message = err_msg
+        job.save(update_fields=["status", "error_message"])
+        set_progress(job_id, status="failed", error=err_msg)
+        raise

@@ -1,4 +1,4 @@
-STORY 1 — File Upload via UI
+STORY 1 — File Upload via UI - Completed
     As a user, I should be able to upload a large CSV file (up to 500,000 products) directly through the application’s user interface.
     The UI should display a clear and intuitive file upload component.
     During the upload process, the UI should show a real-time progress indicator (e.g., percentage, progress bar).
@@ -7,7 +7,7 @@ STORY 1 — File Upload via UI
     Products may be marked as active or inactive (even though this field is not part of the CSV).
     The upload flow should be optimized for handling large files efficiently while remaining responsive.
 
-STORY 1A — Upload Progress Visibility
+STORY 1A — Upload Progress Visibility- Completed
     As a user, I should be able to see the upload progress directly in the UI in real time.
     The progress should dynamically update as the file is being processed.
     The UI should display visual cues like a progress bar, percentage, or status messages (e.g., “Parsing CSV”, “Validating”, “Import Complete”).
@@ -34,3 +34,10 @@ STORY 3 — Bulk Delete from UI
     It should display webhook URLs, event types, and enable/disable status.
     There should be visual confirmation of successful test triggers (e.g., response code, response time).
     The webhook processing should remain performant and not degrade overall application responsiveness.	
+
+STORY 4 — Webhook Configuration via UI
+    As a user, I should be able to configure and manage multiple webhooks through the application’s user interface.
+    The UI should allow adding, editing, testing, and deleting webhooks.
+    It should display webhook URLs, event types, and enable/disable status.
+    There should be visual confirmation of successful test triggers (e.g., response code, response time).
+    The webhook processing should remain performant and not degrade overall application responsiveness.

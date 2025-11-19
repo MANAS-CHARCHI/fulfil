@@ -1,0 +1,92 @@
+version: "3.9"
+
+services:
+  # Backend (FastAPI + Uvicorn)
+  backend:
+    build: ./backend
+    command: uvicorn acme.asgi:application --host 0.0.0.0 --port 5000 --reload
+    volumes:
+      - ./backend:/app # Mount local code for hot reload
+    ports:
+      - "5000:5000"
+    environment:
+      - DATABASE_URL=postgresql://acme:acmepw@db:5432/acme
+      - CELERY_BROKER_URL=amqp://guest:guest@rabbitmq:5672//
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    depends_on:
+      - db
+      - rabbitmq
+      - redis
+
+  # Frontend (ReactJS)
+  frontend:
+    build: ./frontend/acme_frontend
+    command: npm run dev
+    volumes:
+      - ./frontend/acme_frontend:/app
+      - /app/node_modules
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+  # Redis for Celery backend
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  # RabbitMQ for Celery broker
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+  # PostgreSQL database
+  db:
+    image: postgres:15
+    container_name: acme_db
+    environment:
+      POSTGRES_USER: acme
+      POSTGRES_PASSWORD: acmepw
+      POSTGRES_DB: acme
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # Celery worker for 'imports'
+  celery_imports:
+    build: ./backend
+    command: celery -A acme worker -Q imports -n imports_worker@%h -c 10 -l info
+    volumes:
+      - ./backend:/app
+    environment:
+      - DATABASE_URL=postgresql://acme:acmepw@db:5432/acme
+      - CELERY_BROKER_URL=amqp://guest:guest@rabbitmq:5672//
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    depends_on:
+      - backend
+      - rabbitmq
+      - redis
+      - db
+
+  # Celery worker for 'imports_merge'
+  celery_imports_merge:
+    build: ./backend
+    command: celery -A acme worker -Q imports_merge -n imports_merge@%h -c 1 -l info
+    volumes:
+      - ./backend:/app
+    environment:
+      - DATABASE_URL=postgresql://acmepw:acmepw@db:5432/acme
+      - CELERY_BROKER_URL=amqp://guest:guest@rabbitmq:5672//
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    depends_on:
+      - backend
+      - rabbitmq
+      - redis
+      - db
+
+volumes:
+  postgres_data:

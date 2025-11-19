@@ -1,44 +1,69 @@
-import os, uuid
-from django.http import StreamingHttpResponse
-from rest_framework.response import Response
-from rest_framework.decorators import api_view
+# catalog/views.py
+import os
 from django.conf import settings
-from django_redis import get_redis_connection
-from .tasks import split_csv_into_chunks
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+from .models import UploadJob
+from .tasks import process_csv_phase1
+from django.views.decorators.http import require_POST, require_DELETE
+from .models import Product
+import json
 
-UPLOAD_DIR = settings.MEDIA_ROOT
+@csrf_exempt
+def upload_products(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "POST required"}, status=405)
 
-@api_view(["POST"])
-def upload_csv(request):
-    f = request.FILES["file"]
+    upload_file = request.FILES.get('file')
+    if not upload_file:
+        return JsonResponse({"error": "file missing"}, status=400)
 
-    uid = uuid.uuid4().hex
-    path = os.path.join(UPLOAD_DIR, f"{uid}.csv")
+    # ensure MEDIA_ROOT exists
+    tmp_dir = settings.MEDIA_ROOT
+    os.makedirs(tmp_dir, exist_ok=True)
+    file_name = f"{upload_file.name}-{os.urandom(6).hex()}"
+    file_path = os.path.join(tmp_dir, file_name)
 
-    with open(path, "wb+") as d:
-        for chunk in f.chunks():
-            d.write(chunk)
+    # save file
+    with open(file_path, 'wb') as fh:
+        for chunk in upload_file.chunks():
+            fh.write(chunk)
 
-    task = split_csv_into_chunks.apply_async(args=[path], queue="upload")
+    job = UploadJob.objects.create(filename=upload_file.name, status="pending")
 
-    return Response({"task_id": task.id})
+    # enqueue Phase 1 job to 'imports' queue
+    process_csv_phase1.apply_async(args=[str(job.id), file_path], queue='imports')
 
+    return JsonResponse({"job_id": str(job.id)}, status=202)
 
-# SSE EVENT STREAM
-def event_stream(task_id):
-    r = get_redis_connection("default")
-    pub = r.pubsub()
-    pub.subscribe(f"progress_{task_id}")
+@csrf_exempt
+@require_POST
+def update_product_status(request, product_id):
+    try:
+        body = json.loads(request.body)
+        active = body.get("active", None)
+        if active is None:
+            return JsonResponse({"error": "Missing 'active' field"}, status=400)
 
-    for msg in pub.listen():
-        if msg["type"] != "message":
-            continue
-        yield f"data: {msg['data'].decode()}\n\n"
+        product = Product.objects.get(id=product_id)
+        product.active = active
+        product.save()
 
-
-def progress_sse(request, task_id):
-    resp = StreamingHttpResponse(event_stream(task_id),
-                                 content_type="text/event-stream")
-    resp["Cache-Control"] = "no-cache"
-    resp["X-Accel-Buffering"] = "no"
-    return resp
+        return JsonResponse({
+            "id": product.id,
+            "active": product.active
+        })
+    except Product.DoesNotExist:
+        return JsonResponse({"error": "Product not found"}, status=404)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+    
+@csrf_exempt
+@require_DELETE
+def delete_product(request, product_id):
+    try:
+        product = Product.objects.get(id=product_id)
+        product.delete()
+        return JsonResponse({"status": "deleted"})
+    except Product.DoesNotExist:
+        return JsonResponse({"error": "Product not found"}, status=404)
