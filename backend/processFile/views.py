@@ -5,7 +5,7 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from .models import UploadJob
 from .tasks import process_csv_phase1
-from django.views.decorators.http import require_POST, require_DELETE
+from django.views.decorators.http import require_POST
 from .models import Product
 import json
 
@@ -58,12 +58,12 @@ def update_product_status(request, product_id):
     except json.JSONDecodeError:
         return JsonResponse({"error": "Invalid JSON"}, status=400)
     
-@csrf_exempt
-@require_DELETE
-def delete_product(request, product_id):
-    try:
-        product = Product.objects.get(id=product_id)
-        product.delete()
-        return JsonResponse({"status": "deleted"})
-    except Product.DoesNotExist:
-        return JsonResponse({"error": "Product not found"}, status=404)
+# @csrf_exempt
+# @require_DELETE
+# def delete_product(request, product_id):
+#     try:
+#         product = Product.objects.get(id=product_id)
+#         product.delete()
+#         return JsonResponse({"status": "deleted"})
+#     except Product.DoesNotExist:
+#         return JsonResponse({"error": "Product not found"}, status=404)
